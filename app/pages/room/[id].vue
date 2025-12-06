@@ -210,7 +210,7 @@
        </div>
 
        <!-- Player Area (Bottom) -->
-       <div class="h-48 md:h-72 flex shrink-0 border-t border-white/5 bg-gradient-to-t from-black/60 to-transparent shadow-[0_-10px_40px_rgba(0,0,0,0.5)] z-30">
+       <div class="h-80 md:h-72 flex shrink-0 border-t border-white/5 bg-gradient-to-t from-black/60 to-transparent shadow-[0_-10px_40px_rgba(0,0,0,0.5)] z-30">
            
            <!-- Hand Container -->
            <div ref="containerRef" class="flex-1 relative overflow-hidden" :class="{'ring-2 ring-emerald-500/50': isMyTurn && roomState?.turnPhase === 'action'}">
@@ -513,46 +513,114 @@ const autoLayoutCards = () => {
         step = (availableWidth - cardWidth) / (count - 1);
     }
     
-    if (step > 70) step = 70; // Max gap
-    if (step < 20) step = 20; // Abs minimum overlap (very tight)
-
-    // Center if it fits, else start at padding
-    const totalGroupWidth = (count - 1) * step + cardWidth;
-    let startX = paddingX;
-
-    if (totalGroupWidth <= availableWidth) {
-         startX = Math.max(paddingX, (clientWidth - totalGroupWidth) / 2);
-    } else {
-         // If it still doesn't fit (step clamped at 20), we start at 0 or padding
-         startX = 10;
+    // Multi-row logic for mobile if crowded
+    let useMultiRow = false;
+    if (isMobile.value && step < 36) { // Threshold for overlap
+        useMultiRow = true;
     }
-    
-    // Default Y
+
+    // Recalculate step for multi-row if needed
+    let rows = 1;
+    if (useMultiRow) {
+        rows = 2;
+        // Split cards into two groups
+        // Row 0 (Top/Back): First half
+        // Row 1 (Bottom/Front): Second half
+        // We need to calculate step for the wider row (usually the one with more cards)
+        const cardsPerRow = Math.ceil(count / rows);
+        if (cardsPerRow > 1) {
+             step = (availableWidth - cardWidth) / (cardsPerRow - 1);
+             if (step > 70) step = 70;
+        } else {
+            step = 70;
+        }
+    } else {
+        if (step > 70) step = 70; // Max gap
+        if (step < 20) step = 20; // Abs minimum overlap
+    }
+
+    // Default Y (Bottom row)
     const defaultY = clientHeight - cardHeight - 20; 
+    const rowGap = 90; // Vertical gap between rows
 
     const updates: any[] = [];
 
-    // Sort by Char before spreading? User asked for spread, usually implies sort. 
-    // Let's sort locally for display if we are auto-layouting.
-    // Note: Mutating the array order in 'players' might be tricky if it syncs weirdly, 
-    // but myHand is a computed from roomState. We should probably sort the roomState hand directly or just x/y.
-    // Let's just update X/Y based on current order to avoid re-ordering unexpected. 
-    // Wait, Mahjong UX usually expects sorted hands. The server sorts on deal.
-    
-    myHand.value.forEach((c, i) => {
-        const nx = startX + (i * step);
-        const ny = Math.min(c.y, defaultY); // Keep current Y if higher (user moved it?), or snap to bottom
-        // Actually, "initially" implies snapping to safe area.
+    // Sort by visual position (Y then X) to preserve user layout
+    // We create a shallow copy to sort, so we don't mutate the original array order (which is reactive/readonly)
+    // We use a threshold for Y to group them into "visual rows" before sorting by X.
+    const sortedHand = [...myHand.value].sort((a, b) => {
+        const yDiff = a.y - b.y;
+        // If Y difference is significant (e.g. > 1/2 card height), treat as different row
+        if (Math.abs(yDiff) > 40) { 
+            return yDiff;
+        }
+        return a.x - b.x;
+    });
+
+    sortedHand.forEach((c, i) => {
+        let nx = 0;
+        let ny = defaultY;
+        let zIndex = i;
+
+        if (useMultiRow) {
+            const midPoint = Math.ceil(count / 2);
+            const isTopRow = i < midPoint;
+            
+            // Re-index for the row
+            const rowIndex = isTopRow ? i : (i - midPoint);
+            const rowCount = isTopRow ? midPoint : (count - midPoint);
+            
+            // Recalculate step for this specific row to center it nicely
+            let rowStep = 70;
+            if (rowCount > 1) {
+                rowStep = (availableWidth - cardWidth) / (rowCount - 1);
+                if (rowStep > 70) rowStep = 70;
+            }
+
+            const rowWidth = (rowCount - 1) * rowStep + cardWidth;
+            let rowStartX = paddingX;
+            if (rowWidth <= availableWidth) {
+                rowStartX = Math.max(paddingX, (clientWidth - rowWidth) / 2);
+            } else {
+                rowStartX = 10;
+            }
+
+            nx = rowStartX + (rowIndex * rowStep);
+            
+            if (isTopRow) {
+                ny = defaultY - rowGap;
+                zIndex = i; // Lower z-index for back row
+            } else {
+                ny = defaultY;
+                zIndex = 100 + i; // Higher z-index for front row
+            }
+
+        } else {
+            // Single Row Logic
+            const totalGroupWidth = (count - 1) * step + cardWidth;
+            let startX = paddingX;
+
+            if (totalGroupWidth <= availableWidth) {
+                 startX = Math.max(paddingX, (clientWidth - totalGroupWidth) / 2);
+            } else {
+                 startX = 10;
+            }
+            
+            nx = startX + (i * step);
+            ny = defaultY;
+        }
+
         const safeY = Math.min(Math.max(10, c.y), clientHeight - cardHeight);
         
-        // Force reset Y if it looks like default 120/200 and we want to align
-        // Let's just update to nice layout
+        // If we are in auto-layout mode (triggered by button or resize), we force the position.
+        // But we also want to respect if user just dragged it? 
+        // The function is called 'autoLayoutCards', so it should enforce layout.
         
-        if (Math.abs(c.x - nx) > 1 || Math.abs(c.y - safeY) > 1) {
+        if (Math.abs(c.x - nx) > 1 || Math.abs(c.y - ny) > 1) {
             c.x = nx; 
-            c.y = safeY;
-            c.zIndex = i;
-            updates.push({ id: c.id, x: nx, y: safeY, zIndex: i });
+            c.y = ny;
+            c.zIndex = zIndex;
+            updates.push({ id: c.id, x: nx, y: ny, zIndex: zIndex });
         }
     });
 
@@ -612,6 +680,8 @@ const placeNewCards = (newCards: CardType[]) => {
 }
 
 // Auto-scaling logic for overlays
+const windowWidth = ref(1024); // Default to desktop, updates on mount
+
 const calculateTransform = (hand: CardType[]) => {
      if (!hand || hand.length === 0) return {};
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -627,22 +697,31 @@ const calculateTransform = (hand: CardType[]) => {
     const totalW = (maxX - minX) + cardW;
     const totalH = (maxY - minY) + cardH;
     
-    const containerW = 800; // max width
-    const containerH = 280; // max height (increased slightly)
+    // Available width calculation
+    // Container is max-w-4xl (896px) with some padding.
+    // On mobile, it's windowWidth - padding (approx 64px for p-8 * 2)
+    const maxContainerW = 896;
+    const padding = 64; 
+    const availableW = Math.min(windowWidth.value - padding, maxContainerW);
     
-    // Scale down if needed, but don't scale up too much (max 1.0)
-    // User requested scrolling, so we disable scaling down to fit. 
-    // We let width contain the cards and outer container scroll.
-    const scale = 1.0; 
+    // Calculate Scale
+    let scale = 1.0;
+    if (totalW > availableW) {
+        scale = availableW / totalW;
+    }
     
-    // To center:
-    // 1. Shift: translate(-minX, -minY). Now cards are at [0,0] to [totalW, totalH].
-    // 2. Scale: scale(S).
-    // 3. Transform Origin: top left.
+    // Center the content if scaled or if smaller than available width
+    // We use transform origin top-left, so we need to translate X to center it.
+    // However, the container is flex-start. If we want it centered, we can use margin: auto on the inner div?
+    // Or just calculate left offset.
+    
+    // Actually, let's just return the transform.
+    // We need to shift the cards so minX, minY becomes 0,0 first.
+    // Then scale.
     
     return {
-        width: `${totalW}px`,
-        height: `${totalH}px`,
+        width: `${totalW * scale}px`,
+        height: `${totalH * scale}px`,
         transformOrigin: 'top left',
         transform: `scale(${scale}) translate(${-minX}px, ${-minY}px)`
     };
@@ -681,6 +760,7 @@ const isMobile = ref(false);
 const updateMobileState = () => {
     if (typeof window !== 'undefined') {
         isMobile.value = window.innerWidth < 640;
+        windowWidth.value = window.innerWidth;
     }
 };
 
