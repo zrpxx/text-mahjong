@@ -240,6 +240,7 @@
                       :char="card.char" 
                       :id="card.id"
                       class="pointer-events-none shadow-xl rounded-lg" 
+                      :style="cardDims.ui"
                     />
               </div>
            </div>
@@ -269,6 +270,13 @@ const roomStatus = computed(() => roomState.value?.status || 'waiting');
 const myPlayer = computed(() => players.value.find(p => p.nickname === lobbyStore.nickname));
 const myHand = computed<CardType[]>(() => myPlayer.value?.hand || []);
 const opponents = computed(() => players.value.filter(p => p.nickname !== lobbyStore.nickname));
+
+const handContentWidth = computed(() => {
+    if (myHand.value.length === 0) return 0;
+    // Find right-most edge
+    const maxRight = Math.max(...myHand.value.map(c => c.x + cardDims.value.w)); 
+    return maxRight + 100; // Extra padding
+});
 
 const isHost = computed(() => {
    // Simple host logic: first player is host
@@ -389,8 +397,8 @@ const handleMove = (x: number, y: number) => {
     if (!draggingCardId.value || !containerRef.value) return;
     
     const containerRect = containerRef.value.getBoundingClientRect();
-    const cardWidth = 60; // Approximate card width
-    const cardHeight = 80; // Approximate card height
+    const cardWidth = cardDims.value.w; 
+    const cardHeight = cardDims.value.h;
     const localX = x - containerRect.left - (cardWidth / 2);
     const localY = y - containerRect.top - (cardHeight / 2);
     
@@ -489,9 +497,9 @@ const autoLayoutCards = () => {
     if (count === 0) return;
 
     // Distribute Logic
-    const cardWidth = 60; 
-    const cardHeight = 80;
-    const paddingX = 20;
+    const cardWidth = cardDims.value.w; 
+    const cardHeight = cardDims.value.h;
+    const paddingX = cardDims.value.paddingX;
     const availableWidth = clientWidth - (paddingX * 2);
     
     // Determine overlapping step. 
@@ -510,10 +518,10 @@ const autoLayoutCards = () => {
 
     // Center if it fits, else start at padding
     const totalGroupWidth = (count - 1) * step + cardWidth;
-    let startX = 20;
+    let startX = paddingX;
 
     if (totalGroupWidth <= availableWidth) {
-         startX = Math.max(20, (clientWidth - totalGroupWidth) / 2);
+         startX = Math.max(paddingX, (clientWidth - totalGroupWidth) / 2);
     } else {
          // If it still doesn't fit (step clamped at 20), we start at 0 or padding
          startX = 10;
@@ -557,14 +565,14 @@ const placeNewCards = (newCards: CardType[]) => {
     if (newCards.length === 0 || !containerRef.value) return;
 
     const { clientWidth, clientHeight } = containerRef.value;
-    const cardHeight = 80;
-    const cardWidth = 60;
+    const cardHeight = cardDims.value.h;
+    const cardWidth = cardDims.value.w;
     const defaultY = clientHeight - cardHeight - 20;
 
     // Find the rightmost X position of existing cards (that are NOT in the new set)
     const existingCards = myHand.value.filter(c => !newCards.some(nc => nc.id === c.id));
     
-    let startX = 20; // Default if no cards
+    let startX = cardDims.value.paddingX; // Default if no cards
     if (existingCards.length > 0) {
         // Find max X + width
         const maxX = Math.max(...existingCards.map(c => c.x));
@@ -614,7 +622,7 @@ const calculateTransform = (hand: CardType[]) => {
         if (c.y > maxY) maxY = c.y;
     });
 
-    const cardW = 60;
+    const cardW = 60; // Keep fixed for popup to ensure consistency with scale 1.0
     const cardH = 80;
     const totalW = (maxX - minX) + cardW;
     const totalH = (maxY - minY) + cardH;
@@ -668,23 +676,57 @@ watch(() => myHand.value, (newHand, oldHand) => {
     }
 }, { deep: true });
 
+// Responsive Logic
+const isMobile = ref(false);
+const updateMobileState = () => {
+    if (typeof window !== 'undefined') {
+        isMobile.value = window.innerWidth < 640;
+    }
+};
+
+const cardDims = computed(() => {
+    if (isMobile.value) {
+        return { 
+            w: 46, // Logic Width (40 + 6 gap)
+            h: 70, // Logic Height (56 + 14 gap)
+            ui: { width: '40px', height: '56px' },
+            paddingX: 10
+        };
+    }
+    return { 
+        w: 60, // Default Logic Width (48 + 12 gap)
+        h: 80, // Default Logic Height (64 + 16 gap)
+        ui: {}, // Default use class w-12 h-16 (48x64)
+        paddingX: 20
+    };
+});
+
 onMounted(() => {
+    updateMobileState();
+    window.addEventListener('resize', handleResize);
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
     window.addEventListener('touchmove', onTouchMove, { passive: false });
     window.addEventListener('touchend', onTouchEnd);
-    window.addEventListener('resize', autoLayoutCards);
     
     // Initial check
-    setTimeout(autoLayoutCards, 500); // Wait for transition/render
+    setTimeout(() => {
+        updateMobileState();
+        autoLayoutCards();
+    }, 500); 
 });
 
+const handleResize = () => {
+    updateMobileState();
+    autoLayoutCards();
+};
+
 onUnmounted(() => {
+    window.removeEventListener('resize', handleResize);
     window.removeEventListener('mousemove', onMouseMove);
     window.removeEventListener('mouseup', handleMouseUp);
     window.removeEventListener('touchmove', onTouchMove);
     window.removeEventListener('touchend', onTouchEnd);
-    window.removeEventListener('resize', autoLayoutCards);
 });
 </script>
 
