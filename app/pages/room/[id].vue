@@ -27,22 +27,30 @@
                🎉 赢家: {{ roomState.winner.nickname }}
            </div>
            
-           <div class="relative w-full max-w-4xl h-64 bg-slate-800/50 rounded-2xl mb-12 overflow-hidden border border-white/10 shadow-inner">
-               <div 
-                   v-for="(card, i) in roomState.winner.hand" 
-                   :key="i"
-                   class="absolute transition-all duration-500"
-                   :style="{
-                       left: `${card.x}px`,
-                       top: `${card.y}px`,
-                       zIndex: card.zIndex
-                   }"
-               >
-                   <Card 
-                     :char="card.char"
-                     :id="card.id"
-                     class="scale-100 shadow-2xl"
-                   />
+           <div 
+               class="relative w-full max-w-4xl min-h-[200px] bg-slate-800/50 rounded-2xl mb-12 border border-white/10 shadow-inner flex items-center justify-start overflow-x-auto"
+               ref="winnerHandContainer"
+           >
+                <div 
+                    class="relative origin-center transition-transform duration-500"
+                    :style="winnerHandContainerStyle"
+                >
+                   <div 
+                       v-for="(card, i) in roomState.winner.hand" 
+                       :key="i"
+                       class="absolute transition-all duration-500"
+                       :style="{
+                           left: `${card.x}px`,
+                           top: `${card.y}px`,
+                           zIndex: card.zIndex
+                       }"
+                   >
+                       <Card 
+                         :char="card.char"
+                         :id="card.id"
+                         class="scale-100 shadow-2xl"
+                       />
+                   </div>
                </div>
            </div>
            
@@ -64,24 +72,30 @@
                 {{ roomState.votingData.candidateId === $socket?.id ? '等待投票...' : '有人胡牌了，这合理吗？' }}
             </h2>
             
-            <!-- Candidate Hand Display (Canvas) -->
-            <div class="relative w-full max-w-4xl h-64 bg-slate-800/50 rounded-2xl border border-white/10 mb-10 overflow-hidden shadow-2xl">
+            <!-- Candidate Hand Display (Flex) -->
+            <!-- Candidate Hand Display (Scaled Absolute) -->
+            <div class="relative w-full max-w-4xl min-h-[200px] bg-slate-800/50 rounded-2xl border border-white/10 mb-10 shadow-2xl flex items-center justify-start overflow-x-auto">
                  <div 
-                   v-for="(card, i) in candidateHand" 
-                   :key="i"
-                   class="absolute transition-all duration-500"
-                   :style="{
-                       left: `${card.x}px`,
-                       top: `${card.y}px`,
-                       zIndex: card.zIndex
-                   }"
-               >
-                   <Card 
-                     :char="card.char"
-                     :id="card.id"
-                     class="scale-100 shadow-xl pointer-events-none"
-                   />
-               </div>
+                    class="relative origin-center transition-transform duration-500"
+                    :style="candidateHandContainerStyle"
+                >
+                    <div 
+                       v-for="(card, i) in candidateHand" 
+                       :key="i"
+                       class="absolute transition-all duration-500"
+                       :style="{
+                           left: `${card.x}px`,
+                           top: `${card.y}px`,
+                           zIndex: card.zIndex
+                       }"
+                   >
+                       <Card 
+                         :char="card.char"
+                         :id="card.id"
+                         class="scale-100 shadow-xl pointer-events-none"
+                       />
+                   </div>
+                 </div>
             </div>
             
             <!-- Voting Controls (For Voters) -->
@@ -201,6 +215,7 @@
            <!-- Hand Container -->
            <div ref="containerRef" class="flex-1 relative overflow-hidden" :class="{'ring-2 ring-emerald-500/50': isMyTurn && roomState?.turnPhase === 'action'}">
               <div class="absolute inset-x-0 bottom-0 h-full w-full pointer-events-none opacity-20 bg-[url('https://www.transparenttextures.com/patterns/felt.png')]"></div>
+
               
               <div v-if="isMyTurn && roomState?.turnPhase === 'action'" class="absolute -top-6 left-1/2 -translate-x-1/2 px-4 py-1 bg-emerald-600 text-white text-xs rounded-full shadow-lg z-50 animate-bounce pointer-events-none">
                   可自由拖拽整理 · 点击出牌
@@ -480,19 +495,29 @@ const autoLayoutCards = () => {
     const availableWidth = clientWidth - (paddingX * 2);
     
     // Determine overlapping step. 
-    // If cards fit without overlap: step = 60 + gap. 
-    // If cards need overlap: step < 60.
-    // We want to fill usage if possible, but not too sparse.
-    // Max spread: 70px (slight gap). Min: enough to see index.
+    // We try to fit everything in availableWidth.
+    // count * cardWidth is too wide, so we need overlap.
+    // TotalWidth = (count - 1) * step + cardWidth
+    // So MaxStep = (availableWidth - cardWidth) / (count - 1)
     
-    let step = Math.min(70, availableWidth / (count || 1));
-    // If we have very few cards, center them? 
-    // For now, let's just stack from left with calculated step to prevent overflow.
-    if (step < 30) step = 30; // Min overlap
+    let step = 70;
+    if (count > 1) {
+        step = (availableWidth - cardWidth) / (count - 1);
+    }
     
-    // Center the whole group
+    if (step > 70) step = 70; // Max gap
+    if (step < 20) step = 20; // Abs minimum overlap (very tight)
+
+    // Center if it fits, else start at padding
     const totalGroupWidth = (count - 1) * step + cardWidth;
-    const startX = Math.max(0, (clientWidth - totalGroupWidth) / 2);
+    let startX = 20;
+
+    if (totalGroupWidth <= availableWidth) {
+         startX = Math.max(20, (clientWidth - totalGroupWidth) / 2);
+    } else {
+         // If it still doesn't fit (step clamped at 20), we start at 0 or padding
+         startX = 10;
+    }
     
     // Default Y
     const defaultY = clientHeight - cardHeight - 20; 
@@ -528,10 +553,120 @@ const autoLayoutCards = () => {
     }
 }
 
-watch(() => myHand.value.length, () => {
-    // Check when hand size changes (new cards dealing)
-    nextTick(ensureCardsVisible);
-});
+const placeNewCards = (newCards: CardType[]) => {
+    if (newCards.length === 0 || !containerRef.value) return;
+
+    const { clientWidth, clientHeight } = containerRef.value;
+    const cardHeight = 80;
+    const cardWidth = 60;
+    const defaultY = clientHeight - cardHeight - 20;
+
+    // Find the rightmost X position of existing cards (that are NOT in the new set)
+    const existingCards = myHand.value.filter(c => !newCards.some(nc => nc.id === c.id));
+    
+    let startX = 20; // Default if no cards
+    if (existingCards.length > 0) {
+        // Find max X + width
+        const maxX = Math.max(...existingCards.map(c => c.x));
+        startX = maxX + cardWidth + 10; // Gap
+    } else {
+        // First deal or empty hand, maybe center? But this fn is for "new" cards.
+        // If it's the initial deal, existingCards is empty.
+        // We should falling back to autoLayout if it's a massive change (like initial deal).
+    }
+
+    const updates: any[] = [];
+    newCards.forEach((c, i) => {
+        // If it's a "draw", usually it's just 1 card.
+        // If it's initial deal (13 cards), startX works but might go off screen.
+        // Let's rely on autoLayout for initial large batches, and this for small add.
+        
+        let nx = startX + (i * (cardWidth + 10));
+        
+        // Simple clamp to not go totally off screen, though user might have organize button.
+        // Simple clamp to not go totally off screen, though user might have organize button.
+        // With scroll, we don't clamp to clientWidth!
+        // if (nx > clientWidth - cardWidth) {
+        //    nx = clientWidth - cardWidth - 10; // Stack at end
+        // }
+
+        const ny = defaultY;
+        
+        c.x = nx;
+        c.y = ny;
+        c.zIndex = existingCards.length + i;
+        updates.push({ id: c.id, x: nx, y: ny, zIndex: c.zIndex });
+    });
+
+    if (updates.length > 0) {
+        $socket?.emit('update_hand_layout', updates);
+    }
+}
+
+// Auto-scaling logic for overlays
+const calculateTransform = (hand: CardType[]) => {
+     if (!hand || hand.length === 0) return {};
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    hand.forEach(c => {
+        if (c.x < minX) minX = c.x;
+        if (c.x > maxX) maxX = c.x;
+        if (c.y < minY) minY = c.y;
+        if (c.y > maxY) maxY = c.y;
+    });
+
+    const cardW = 60;
+    const cardH = 80;
+    const totalW = (maxX - minX) + cardW;
+    const totalH = (maxY - minY) + cardH;
+    
+    const containerW = 800; // max width
+    const containerH = 280; // max height (increased slightly)
+    
+    // Scale down if needed, but don't scale up too much (max 1.0)
+    // User requested scrolling, so we disable scaling down to fit. 
+    // We let width contain the cards and outer container scroll.
+    const scale = 1.0; 
+    
+    // To center:
+    // 1. Shift: translate(-minX, -minY). Now cards are at [0,0] to [totalW, totalH].
+    // 2. Scale: scale(S).
+    // 3. Transform Origin: top left.
+    
+    return {
+        width: `${totalW}px`,
+        height: `${totalH}px`,
+        transformOrigin: 'top left',
+        transform: `scale(${scale}) translate(${-minX}px, ${-minY}px)`
+    };
+}
+
+const winnerHandContainerStyle = computed(() => calculateTransform(roomState.value?.winner?.hand || []));
+const candidateHandContainerStyle = computed(() => calculateTransform(candidateHand.value));
+
+
+
+
+// Better watcher
+watch(() => myHand.value, (newHand, oldHand) => {
+    if (!oldHand || oldHand.length === 0) {
+        // Initial load or reset
+        nextTick(autoLayoutCards);
+        return;
+    }
+
+    const oldIds = new Set(oldHand.map(c => c.id));
+    const added = newHand.filter(c => !oldIds.has(c.id));
+    
+    if (added.length > 0) {
+        // Only layout the new cards
+        if (added.length > 2) {
+             // Mass add -> Auto layout (e.g. restart)
+             nextTick(autoLayoutCards);
+        } else {
+             nextTick(() => placeNewCards(added));
+        }
+    }
+}, { deep: true });
 
 onMounted(() => {
     window.addEventListener('mousemove', onMouseMove);
